@@ -14,7 +14,9 @@ V1.2 (4/17/2025) - Added Health Potion
 
 V1.3 (4/19/2025) - Added Attack Boost Potion
 
-****Adding Sun Strike Attack****
+V1.4 (6/30/2025) - Added Sun Strike Attacj (Used on right click)
+
+***More enemies and boss level cpming up!***
 
 
 More game mechanics coming up! Stay tuned!
