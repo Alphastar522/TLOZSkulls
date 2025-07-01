@@ -10,6 +10,17 @@ local player, inventory, hotbar, enemies, camera, healthPotionImage, attackBoost
 local enemySpawnTimer, enemySpawnInterval = 0, 2
 local gameOver = false
 
+-- Sun Strike variables (moved outside player table for global access to position)
+local sunStrikeFrames = {}
+local sunStrikeActive = false
+local sunStrikeTimer = 0
+local sunStrikeFrameIndex = 1
+local sunStrikeCooldown = 5 -- Cooldown in seconds
+local sunStrikeCooldownTimer = 0
+local sunStrikeX, sunStrikeY -- Store the position where sun strike is cast
+local sunStrikeDamageApplied = false -- Flag to ensure damage is applied only once per strike
+local sunStrikeScale = 1.5 -- Enlarge the image by 50% (1.0 is original size)
+
 function love.load()
     -- Initialize player
     player = {
@@ -80,6 +91,12 @@ function love.load()
         width = love.graphics.getWidth(),
         height = love.graphics.getHeight()
     }
+
+    -- Load Sun Strike animation
+    for i = 0, 11 do
+        local frame = love.graphics.newImage(string.format("assets/SSAS/SunStrikeFrame-%02d.png", i))
+        table.insert(sunStrikeFrames, frame)
+    end
 end
 
 function love.update(dt)
@@ -111,10 +128,13 @@ function love.update(dt)
         end
 
         -- Update direction-based animation
-        if player.direction == "up" then player.currentWalkImages = player.walkUpImages
-        elseif player.direction == "down" then player.currentWalkImages = player.walkDownImages
-        elseif player.direction == "left" then player.currentWalkImages = player.walkLeftImages
-        elseif player.direction == "right" then player.currentWalkImages = player.walkRightImages end
+        if love.keyboard.isDown('w') then player.currentWalkImages = player.walkUpImages
+        elseif love.keyboard.isDown('s') then player.currentWalkImages = player.walkDownImages
+        elseif love.keyboard.isDown('a') then player.currentWalkImages = player.walkLeftImages
+        elseif love.keyboard.isDown('d') then player.currentWalkImages = player.walkRightImages
+        else player.currentWalkImages = player.walkDownImages -- Default to facing down when not moving
+        end
+
 
         -- Update camera
         camera.x = math.max(0, math.min(player.x - camera.width / 2, love.graphics.getWidth() - camera.width))
@@ -126,6 +146,34 @@ function love.update(dt)
                 hotbar.selectedSlot = i
             end
         end
+
+        -- Update Sun Strike cooldown
+        if sunStrikeCooldownTimer > 0 then
+            sunStrikeCooldownTimer = sunStrikeCooldownTimer - dt
+        end
+
+        -- Update Sun Strike animation
+        if sunStrikeActive then
+            sunStrikeTimer = sunStrikeTimer + dt
+            local frameDuration = 1 / 4 -- 4 FPS
+            if sunStrikeTimer >= frameDuration then
+                sunStrikeTimer = 0
+                sunStrikeFrameIndex = sunStrikeFrameIndex + 1
+
+                -- Apply damage when the animation reaches frame 05 (index 6, as it's 0-indexed)
+                if sunStrikeFrameIndex == 6 and not sunStrikeDamageApplied then -- Changed from 2 to 6 for frame 05
+                    applySunStrikeDamage()
+                    sunStrikeDamageApplied = true
+                end
+
+                if sunStrikeFrameIndex > #sunStrikeFrames then
+                    sunStrikeActive = false
+                    sunStrikeFrameIndex = 1
+                    sunStrikeDamageApplied = false -- Reset for next strike
+                end
+            end
+        end
+
     else
         if love.keyboard.isDown("r") then
             gameOver = false
@@ -140,53 +188,105 @@ function love.update(dt)
 end
 
 function love.mousepressed(x, y, button, istouch, presses)
-    if button == 1 and not gameOver then
-        -- Check potion clicks at top
-        for i, potion in ipairs(inventory) do
-            local potX = 10 + (i - 1) * 40
-            local potY = 70
-            if x > potX and x < potX + 32 and y > potY and y < potY + 32 and player.rupees >= potion.cost then
-                local selectedSlot = hotbar.slots[hotbar.selectedSlot]
-                if not selectedSlot.item then
-                    selectedSlot.item = {item = potion.item, cost = potion.cost, image = potion.image}
-                    player.rupees = player.rupees - potion.cost
+    if not gameOver then
+        if button == 1 then
+            -- Check potion clicks at top
+            for i, potion in ipairs(inventory) do
+                local potX = 10 + (i - 1) * 40
+                local potY = 70
+                if x > potX and x < potX + 32 and y > potY and y < potY + 32 and player.rupees >= potion.cost then
+                    local selectedSlot = hotbar.slots[hotbar.selectedSlot]
+                    if not selectedSlot.item then
+                        selectedSlot.item = {item = potion.item, cost = potion.cost, image = potion.image}
+                        player.rupees = player.rupees - potion.cost
+                    end
+                    return
                 end
-                return
             end
-        end
 
-        -- Check hotbar clicks to use items
-        for i, slot in ipairs(hotbar.slots) do
-            if x > slot.x and x < slot.x + hotbar.slotSize and y > slot.y and y < slot.y + hotbar.slotSize and slot.item then
-                if slot.item.item == "healthPotion" then
-                    useHealthPotion()
-                    slot.item = nil
-                elseif slot.item.item == "attackBoost" then
-                    useAttackBoost()
-                    slot.item = nil
+            -- Check hotbar clicks to use items
+            for i, slot in ipairs(hotbar.slots) do
+                if x > slot.x and x < slot.x + hotbar.slotSize and y > slot.y and y < slot.y + hotbar.slotSize and slot.item then
+                    if slot.item.item == "healthPotion" then
+                        useHealthPotion()
+                        slot.item = nil
+                    elseif slot.item.item == "attackBoost" then
+                        useAttackBoost()
+                        slot.item = nil
+                    end
+                    return
                 end
-                return
             end
-        end
 
-        -- Attack input
-        if player.attackCooldown <= 0 and not player.attacking then
-            player.attacking = true
-            player.attackCooldown = 0.5
-            player.attackTimer = 0
-            attackEnemiesInRange()
+            -- Attack input (melee)
+            if player.attackCooldown <= 0 and not player.attacking then
+                player.attacking = true
+                player.attackCooldown = 0.5
+                player.attackTimer = 0
+                attackEnemiesInRange()
+            end
+        elseif button == 2 and not sunStrikeActive and sunStrikeCooldownTimer <= 0 then
+            sunStrikeActive = true
+            sunStrikeTimer = 0
+            sunStrikeFrameIndex = 1
+            sunStrikeCooldownTimer = sunStrikeCooldown
+            sunStrikeDamageApplied = false -- Reset damage flag for the new strike
+
+            -- Store the mouse coordinates (adjusted for camera)
+            sunStrikeX = x + camera.x
+            sunStrikeY = y + camera.y
+
+            -- Damage will be applied in update based on animation frame
         end
     end
 end
 
+-- New function to apply Sun Strike damage
+function applySunStrikeDamage()
+    if not sunStrikeActive then return end -- Only apply if sun strike is active
+
+    local currentFrame = sunStrikeFrames[sunStrikeFrameIndex]
+    if not currentFrame then return end
+
+    -- Calculate the effective radius based on the *scaled* image's dimensions
+    local scaledWidth = currentFrame:getWidth() * sunStrikeScale
+    local scaledHeight = currentFrame:getHeight() * sunStrikeScale
+    local strikeRadius = math.max(scaledWidth, scaledHeight) / 2
+
+    for i = #enemies, 1, -1 do
+        local enemy = enemies[i]
+        if enemy.health then
+            -- Calculate distance from the center of the sun strike to the center of the enemy
+            local dx = enemy.x + enemy.width/2 - sunStrikeX
+            local dy = enemy.y + enemy.height/2 - sunStrikeY
+            local distance = math.sqrt(dx * dx + dy * dy)
+
+            if distance <= strikeRadius then
+                enemy.health = 0 -- One-shot
+                if enemy.health <= 0 then
+                    table.remove(enemies, i)
+                    table.insert(enemies, {x = enemy.x, y = enemy.y, timer = 0, bobOffset = 0})
+                end
+            end
+        end
+    end
+end
+
+
 function updatePlayer(dt)
     local newX, newY = player.x, player.y
-    if love.keyboard.isDown('w') then newY = player.y - player.speed * dt; player.direction = "up"
-    elseif love.keyboard.isDown('s') then newY = player.y + player.speed * dt; player.direction = "down"
-    elseif love.keyboard.isDown('a') then newX = player.x - player.speed * dt; player.direction = "left"
-    elseif love.keyboard.isDown('d') then newX = player.x + player.speed * dt; player.direction = "right" end
-    player.x = math.max(0, math.min(newX, love.graphics.getWidth() - player.width))
-    player.y = math.max(0, math.min(newY, love.graphics.getHeight() - player.height))
+    local moving = false -- Track if player is moving
+    if love.keyboard.isDown('w') then newY = player.y - player.speed * dt; player.direction = "up"; moving = true
+    elseif love.keyboard.isDown('s') then newY = player.y + player.speed * dt; player.direction = "down"; moving = true
+    elseif love.keyboard.isDown('a') then newX = player.x - player.speed * dt; player.direction = "left"; moving = true
+    elseif love.keyboard.isDown('d') then newX = player.x + player.speed * dt; player.direction = "right"; moving = true end
+
+    -- Only advance walk frame if moving
+    if moving then
+        player.x = math.max(0, math.min(newX, love.graphics.getWidth() - player.width))
+        player.y = math.max(0, math.min(newY, love.graphics.getHeight() - player.height))
+    end
+    
     if player.attackCooldown > 0 then player.attackCooldown = player.attackCooldown - dt end
 end
 
@@ -268,7 +368,13 @@ function love.draw()
     if player.attacking then
         love.graphics.draw(player.attackImages[player.direction], player.x, player.y)
     else
-        love.graphics.draw(player.currentWalkImages[player.walkFrame], player.x, player.y)
+        -- Only draw walking animation if the player is actually moving
+        if love.keyboard.isDown('w') or love.keyboard.isDown('s') or love.keyboard.isDown('a') or love.keyboard.isDown('d') then
+            love.graphics.draw(player.currentWalkImages[player.walkFrame], player.x, player.y)
+        else
+            -- Draw a standing frame if not moving (e.g., first frame of down animation)
+            love.graphics.draw(player.walkDownImages[1], player.x, player.y)
+        end
     end
 
     -- Draw enemies and rupees
@@ -281,6 +387,25 @@ function love.draw()
             love.graphics.rectangle("fill", enemy.x, enemy.y - 10, (enemy.health / 200) * enemy.width, 5)
         else
             love.graphics.draw(rupeeImage, enemy.x, enemy.y + enemy.bobOffset)
+        end
+    end
+
+    -- Draw Sun Strike animation if active
+    if sunStrikeActive then
+        local frame = sunStrikeFrames[sunStrikeFrameIndex]
+        if frame then -- Ensure the frame exists before trying to draw it
+            love.graphics.setColor(1, 1, 1, 0.8)
+            -- Draw at sunStrikeX, sunStrikeY, centering the image, with scaling
+            love.graphics.draw(frame,
+                                sunStrikeX,
+                                sunStrikeY,
+                                0, -- No rotation
+                                sunStrikeScale, -- Scale X
+                                sunStrikeScale, -- Scale Y (same as X to maintain aspect ratio)
+                                frame:getWidth()/2, -- Origin X (for centering)
+                                frame:getHeight()/2 -- Origin Y (for centering)
+                                )
+            love.graphics.setColor(1, 1, 1) -- Reset color
         end
     end
 
@@ -321,5 +446,13 @@ function love.draw()
 
     if gameOver then
         love.graphics.print("Game Over! Press R to restart", love.graphics.getWidth()/2 - 100, love.graphics.getHeight()/2)
+    end
+
+    -- Display Sun Strike cooldown
+    if sunStrikeCooldownTimer > 0 then
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.print(string.format("Sun Strike Cooldown: %.1f", sunStrikeCooldownTimer), love.graphics.getWidth() - 200, 10)
+    else
+        love.graphics.print("Sun Strike Ready!", love.graphics.getWidth() - 200, 10)
     end
 end
