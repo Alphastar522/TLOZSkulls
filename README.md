@@ -14,7 +14,9 @@ V1.2 (4/17/2025) - Added Health Potion
 
 V1.3 (4/19/2025) - Added Attack Boost Potion
 
-V1.4 (6/30/2025) - Added Sun Strike Attacj (Used on right click)
+V1.4 (6/30/2025) - Added Sun Strike Attack (Used on right click)
+
+V1.5 (7/5/2025) - Added dash (press Space) and replaced single sun Strike with lightning. added ultimate ring od sun strikes attack (press u).
 
 ***More enemies and boss level coming up!***
 
